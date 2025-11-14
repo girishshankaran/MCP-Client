@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cisco Docs Chatbot</title>
+    <style>
+      :root {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: #0f172a;
+        background-color: #e2e8f0;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+      }
+      .chat-shell {
+        width: min(960px, 100%);
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: 0 12px 40px rgba(15, 23, 42, 0.15);
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 1.5rem;
+      }
+      header p {
+        margin: 0;
+        color: #475569;
+      }
+      .status {
+        font-size: 0.9rem;
+        color: #2563eb;
+        background: #e0ebff;
+        padding: 0.75rem 1rem;
+        border-radius: 999px;
+        align-self: flex-start;
+      }
+      .messages {
+        flex: 1;
+        min-height: 320px;
+        max-height: 60vh;
+        overflow-y: auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        background: #f8fafc;
+      }
+      .message {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        max-width: 80%;
+      }
+      .message.user {
+        align-self: flex-end;
+      }
+      .message.bot {
+        align-self: flex-start;
+      }
+      .message .label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #94a3b8;
+        letter-spacing: 0.05em;
+      }
+      .bubble {
+        padding: 0.85rem 1rem;
+        border-radius: 14px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .user .bubble {
+        background: #2563eb;
+        color: #fff;
+        border-top-right-radius: 4px;
+      }
+      .bot .bubble {
+        background: #fff;
+        border: 1px solid #cbd5f5;
+        border-top-left-radius: 4px;
+      }
+      .message.error .bubble {
+        background: #fef2f2;
+        border-color: #fca5a5;
+        color: #b91c1c;
+      }
+      form {
+        display: grid;
+        grid-template-columns: 1fr 0.4fr auto;
+        gap: 0.75rem;
+      }
+      form label {
+        display: flex;
+        flex-direction: column;
+        font-size: 0.85rem;
+        color: #475569;
+        gap: 0.35rem;
+      }
+      input {
+        padding: 0.75rem 0.85rem;
+        border-radius: 10px;
+        border: 1px solid #cbd5f5;
+        font-size: 1rem;
+      }
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 0 1.5rem;
+        background: #2563eb;
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      button:disabled {
+        background: #94a3b8;
+        cursor: wait;
+      }
+      .hint {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #94a3b8;
+      }
+      @media (max-width: 768px) {
+        body {
+          padding: 1rem;
+        }
+        form {
+          grid-template-columns: 1fr;
+        }
+        button {
+          padding: 0.85rem;
+        }
+        .messages {
+          max-height: none;
+          min-height: 200px;
+        }
+        .message {
+          max-width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="chat-shell">
+      <header>
+        <div>
+          <h1>Cisco Docs Chatbot</h1>
+          <p>Proxy MCP client with product-aware questions.</p>
+        </div>
+        <div id="status" class="status">Waiting for first question…</div>
+      </header>
+      <section id="messages" class="messages" aria-live="polite" aria-label="Chat history">
+        <article class="message bot">
+          <span class="label">Bot</span>
+          <div class="bubble">
+            Ask anything about Cisco docs. Provide a product keyword for more relevant answers.
+          </div>
+        </article>
+      </section>
+      <form id="chat-form" autocomplete="off">
+        <label>
+          Question
+          <input id="question" name="question" type="text" placeholder="How do I troubleshoot Secure Client?" required />
+        </label>
+        <label>
+          Product (optional)
+          <input id="product" name="product" type="text" placeholder="Cisco Secure Client" />
+        </label>
+        <button type="submit">Ask</button>
+      </form>
+      <p class="hint">
+        Run <code>MCP_API_KEY=&lt;key&gt; CHATBOT_PORT=4173 npm run chatbot:ui</code> in this repo to launch the UI.
+      </p>
+    </main>
+    <script>
+      const form = document.getElementById('chat-form');
+      const questionInput = document.getElementById('question');
+      const productInput = document.getElementById('product');
+      const messages = document.getElementById('messages');
+      const submitButton = form.querySelector('button');
+      const statusBadge = document.getElementById('status');
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!questionInput.value.trim()) {
+          return;
+        }
+
+        const question = questionInput.value.trim();
+        const product = productInput.value.trim();
+        appendMessage('user', question);
+        questionInput.value = '';
+        submitButton.disabled = true;
+
+        const pending = appendMessage('bot', 'Thinking…');
+
+        try {
+          const response = await fetch('/api/ask', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, product })
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.error ?? 'Request failed.');
+          }
+          pending.textContent = payload.answer;
+          updateStatus(payload);
+        } catch (error) {
+          pending.textContent = error.message ?? 'Unable to reach the chatbot.';
+          pending.parentElement.classList.add('error');
+          statusBadge.textContent = 'Error talking to MCP server.';
+        } finally {
+          submitButton.disabled = false;
+          questionInput.focus();
+        }
+      });
+
+      async function refreshStatus() {
+        try {
+          const response = await fetch('/api/status');
+          if (!response.ok) {
+            throw new Error('status error');
+          }
+          const payload = await response.json();
+          updateStatus(payload);
+        } catch (_) {
+          statusBadge.textContent = 'Waiting for first successful call…';
+        }
+      }
+
+      function updateStatus(payload) {
+        const parts = [];
+        if (payload.connected) {
+          parts.push('Connected');
+          if (payload.connectionLabel) {
+            parts.push(`via ${payload.connectionLabel}`);
+          }
+        } else {
+          parts.push('Not connected');
+        }
+        if (payload.productFilter) {
+          parts.push(`default product: ${payload.productFilter}`);
+        }
+        statusBadge.textContent = parts.join(' • ') || 'Idle';
+      }
+
+      function appendMessage(role, text) {
+        const article = document.createElement('article');
+        article.className = `message ${role}`;
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = role === 'user' ? 'You' : 'Bot';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = text;
+        article.append(label, bubble);
+        messages.appendChild(article);
+        messages.scrollTop = messages.scrollHeight;
+        return bubble;
+      }
+
+      refreshStatus();
+    </script>
+  </body>
+</html>
