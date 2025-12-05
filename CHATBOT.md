@@ -15,10 +15,11 @@ Set the following environment variables before running the chatbot:
 | `MCP_API_KEY` | ✅ | – | Your Cisco Docs key. You can also use `CISCO_DOCS_API_KEY` or `X_API_KEY`. |
 | `MCP_PRODUCT` | ✅/❌ | – | Optional product filter (e.g., `Cisco Secure Client`). Greatly improves answer quality. Also accepts `DOCS_PRODUCT`. |
 | `MCP_SSE_URL` (or legacy `MCP_SERVER_URL`) | ❌ | `https://docs-ai.cloudapps.cisco.com/mcp/sse` | SSE endpoint. Leave default unless Cisco confirms a different path. |
-| `MCP_STREAMABLE_URL` | ❌ | `https://docs-ai.cloudapps.cisco.com/mcp` | HTTP endpoint that the client tries before falling back to SSE. |
+| `MCP_STREAMABLE_URL` | ❌ | `https://docs-ai.cloudapps.cisco.com/mcp` | HTTP endpoint tried before SSE. If you override `MCP_SSE_URL`, the streamable default derives from it without the `/sse` suffix. |
 | `MCP_TRANSPORT` | ❌ | `auto` | Set to `streamable` or `sse` to force a specific transport if one of them misbehaves. |
 | `MCP_TOOL_NAME` | ❌ | `ask_cisco_documentation` | A different tool name exposed by the server. |
 | `MCP_EXTRA_ARGS` | ❌ | `{}` | JSON payload merged into every tool call (useful for optional filters). |
+| `CHATBOT_PORT` (or `PORT`) | ❌ | `4173` | Port for the web UI server; CLI `--port` takes precedence. |
 
 Example shell profile entry:
 
@@ -58,6 +59,8 @@ MCP_API_KEY="<redacted>" npm run chatbot:5000
 ```
 
 Open the printed URL to access the UI. The page lets you submit a question, optionally add a product keyword, and view the responses inline. Server logs appear in the terminal window that launched the UI.
+
+To lock in a default product filter for the UI server, pass `--product "<name>"` (or set `MCP_PRODUCT`) when launching it. The browser form still lets you override the product per question.
 
 ### Product filter quick controls
 - Environment variable: `export MCP_PRODUCT="Cisco ACI"`
