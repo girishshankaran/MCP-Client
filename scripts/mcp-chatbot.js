@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { McpChatClient, formatResultContent } from './mcp-client.js';
+import { ChatTargetManager, formatResultContent, loadTargetsFromEnv } from './mcp-client.js';
 
-const chatbotClient = new McpChatClient();
+const targets = loadTargetsFromEnv();
+const targetManager = new ChatTargetManager(targets);
+let activeTarget = targetManager.getDefaultTarget();
 
 async function bootstrap() {
   try {
-    await chatbotClient.connect();
-    console.log(`Connected (${chatbotClient.getConnectionLabel()}) and ready to call ${chatbotClient.toolName}.`);
-    announceProductFilter();
+    const client = await targetManager.getClient(activeTarget);
+    await client.connect();
+    console.log(
+      `Connected to "${activeTarget}" (${client.getConnectionLabel()}) and ready to call ${client.toolName}.`
+    );
+    announceProductFilter(client);
     console.log('Type your question (or /exit to quit).');
   } catch (error) {
     console.error('Unable to start chatbot:', error.message ?? error);
@@ -23,16 +28,17 @@ async function ask(question) {
     return;
   }
   try {
-    const result = await chatbotClient.ask(question);
-    printResult(result);
+    const client = await targetManager.getClient(activeTarget);
+    const result = await client.ask(question);
+    printResult(result, activeTarget);
   } catch (error) {
-    console.error('Tool call failed:', error.message ?? error);
+    console.error(`[${activeTarget}] Tool call failed:`, error.message ?? error);
   }
 }
 
-function printResult(result) {
+function printResult(result, targetName) {
   const formatted = formatResultContent(result);
-  console.log(`\n${formatted}\n`);
+  console.log(`\n[${targetName}] ${formatted}\n`);
 }
 
 async function interactiveLoop() {
@@ -45,11 +51,11 @@ async function interactiveLoop() {
         continue;
       }
       if (trimmed.startsWith('/')) {
-        const handled = handleCommand(trimmed);
+        const handled = await handleCommand(trimmed);
         if (handled) {
           continue;
         }
-        console.log('Unknown command. Available: /product <name>, /product clear, /exit.');
+        console.log('Unknown command. Available: /product <name>, /product clear, /server <name>, /exit.');
         continue;
       }
       if (trimmed === '/exit' || trimmed === '/quit') {
@@ -63,7 +69,7 @@ async function interactiveLoop() {
 }
 
 async function cleanup() {
-  await chatbotClient.close();
+  await targetManager.closeAll();
 }
 
 process.on('SIGINT', async () => {
@@ -73,12 +79,20 @@ process.on('SIGINT', async () => {
 });
 
 (async () => {
-  await bootstrap();
   const cliArgs = process.argv.slice(2);
-  const { question: singleQuestion, productFromCli } = parseCliArgs(cliArgs);
+  const { question: singleQuestion, productFromCli, targetFromCli } = parseCliArgs(cliArgs);
+  if (targetFromCli) {
+    if (!targetManager.hasTarget(targetFromCli)) {
+      console.error(`Unknown target "${targetFromCli}". Available: ${targetManager.getTargetNames().join(', ')}.`);
+      process.exit(1);
+    }
+    activeTarget = targetFromCli;
+  }
+  await bootstrap();
   if (productFromCli !== undefined) {
-    chatbotClient.setProductFilter(productFromCli);
-    announceProductFilter();
+    const client = await targetManager.getClient(activeTarget);
+    client.setProductFilter(productFromCli);
+    announceProductFilter(client);
   }
   if (singleQuestion) {
     await ask(singleQuestion);
@@ -92,6 +106,7 @@ process.on('SIGINT', async () => {
 function parseCliArgs(rawArgs) {
   const remaining = [];
   let productValue;
+  let targetValue;
   for (let i = 0; i < rawArgs.length; i += 1) {
     const arg = rawArgs[i];
     if (arg === '--product' || arg === '-p') {
@@ -103,26 +118,56 @@ function parseCliArgs(rawArgs) {
       productValue = arg.slice('--product='.length);
       continue;
     }
+    if (arg === '--server' || arg === '--target' || arg === '-s') {
+      targetValue = rawArgs[i + 1] ?? '';
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--server=') || arg.startsWith('--target=')) {
+      targetValue = arg.split('=').slice(1).join('=');
+      continue;
+    }
     remaining.push(arg);
   }
-  return { question: remaining.join(' ').trim(), productFromCli: productValue };
+  return { question: remaining.join(' ').trim(), productFromCli: productValue, targetFromCli: targetValue?.trim() };
 }
 
-function handleCommand(input) {
+async function handleCommand(input) {
   const [command, ...rest] = input.slice(1).split(/\s+/);
   switch (command.toLowerCase()) {
-    case 'product':
+    case 'product': {
+      const client = await targetManager.getClient(activeTarget);
       if (rest.length === 0) {
-        announceProductFilter();
+        announceProductFilter(client);
         return true;
       }
       if (rest[0].toLowerCase() === 'clear') {
-        chatbotClient.setProductFilter('');
+        client.setProductFilter('');
+        announceProductFilter(client);
         return true;
       }
-      chatbotClient.setProductFilter(rest.join(' '));
-      announceProductFilter();
+      client.setProductFilter(rest.join(' '));
+      announceProductFilter(client);
       return true;
+    }
+    case 'server':
+    case 'target': {
+      if (!rest.length) {
+        console.log(`Active target: ${activeTarget}`);
+        console.log(`Available targets: ${targetManager.getTargetNames().join(', ')}`);
+        return true;
+      }
+      const nextTarget = rest.join(' ');
+      if (!targetManager.hasTarget(nextTarget)) {
+        console.log(`Unknown target "${nextTarget}". Available: ${targetManager.getTargetNames().join(', ')}`);
+        return true;
+      }
+      activeTarget = nextTarget;
+      const client = await targetManager.getClient(activeTarget);
+      console.log(`Switched to target "${activeTarget}".`);
+      announceProductFilter(client);
+      return true;
+    }
     case 'exit':
     case 'quit':
       process.exit(0);
@@ -132,13 +177,13 @@ function handleCommand(input) {
   }
 }
 
-function announceProductFilter() {
-  const filter = chatbotClient.getProductFilter();
+function announceProductFilter(client) {
+  const filter = client.getProductFilter();
   if (filter) {
-    console.log(`Product filter: ${filter}`);
+    console.log(`[${activeTarget}] Product filter: ${filter}`);
   } else {
     console.log(
-      'No product filter set. Use /product <name>, --product "<name>", or MCP_PRODUCT env var for better results.'
+      `[${activeTarget}] No product filter set. Use /product <name>, --product "<name>", or MCP_PRODUCT env var for better results.`
     );
   }
 }

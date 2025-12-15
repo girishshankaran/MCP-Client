@@ -106,7 +106,7 @@
       }
       form {
         display: grid;
-        grid-template-columns: 1fr 0.4fr auto;
+        grid-template-columns: 1fr 0.6fr 0.5fr auto;
         gap: 0.75rem;
       }
       form label {
@@ -121,6 +121,13 @@
         border-radius: 10px;
         border: 1px solid #cbd5f5;
         font-size: 1rem;
+      }
+      select {
+        padding: 0.75rem 0.85rem;
+        border-radius: 10px;
+        border: 1px solid #cbd5f5;
+        font-size: 1rem;
+        background: #fff;
       }
       button {
         border: none;
@@ -188,6 +195,12 @@
           Product (optional)
           <input id="product" name="product" type="text" placeholder="Cisco Secure Client" />
         </label>
+        <label>
+          Target
+          <select id="target" name="target">
+            <option value="" disabled selected>Loading targets…</option>
+          </select>
+        </label>
         <button type="submit">Ask</button>
       </form>
       <p class="hint">
@@ -198,6 +211,7 @@
       const form = document.getElementById('chat-form');
       const questionInput = document.getElementById('question');
       const productInput = document.getElementById('product');
+      const targetSelect = document.getElementById('target');
       const messages = document.getElementById('messages');
       const submitButton = form.querySelector('button');
       const statusBadge = document.getElementById('status');
@@ -210,6 +224,7 @@
 
         const question = questionInput.value.trim();
         const product = productInput.value.trim();
+        const target = targetSelect.value;
         appendMessage('user', question);
         questionInput.value = '';
         submitButton.disabled = true;
@@ -220,7 +235,7 @@
           const response = await fetch('/api/ask', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question, product })
+            body: JSON.stringify({ question, product, target })
           });
           const payload = await response.json();
           if (!response.ok) {
@@ -252,6 +267,7 @@
       }
 
       function updateStatus(payload) {
+        populateTargets(payload.targets, payload.target);
         const parts = [];
         if (payload.connected) {
           parts.push('Connected');
@@ -261,10 +277,29 @@
         } else {
           parts.push('Not connected');
         }
+        if (payload.target) {
+          parts.push(`target: ${payload.target}`);
+        }
         if (payload.productFilter) {
           parts.push(`default product: ${payload.productFilter}`);
         }
         statusBadge.textContent = parts.join(' • ') || 'Idle';
+      }
+
+      function populateTargets(targets = [], activeTarget) {
+        if (!targets.length) {
+          return;
+        }
+        const currentValue = targetSelect.value;
+        targetSelect.innerHTML = '';
+        targets.forEach((name) => {
+          const option = document.createElement('option');
+          option.value = name;
+          option.textContent = name;
+          targetSelect.appendChild(option);
+        });
+        const nextValue = activeTarget && targets.includes(activeTarget) ? activeTarget : currentValue || targets[0];
+        targetSelect.value = nextValue;
       }
 
       function appendMessage(role, text) {

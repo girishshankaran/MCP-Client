@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve, extname } from 'node:path';
-import { McpChatClient, formatResultContent } from './mcp-client.js';
+import { ChatTargetManager, formatResultContent, loadTargetsFromEnv } from './mcp-client.js';
 
 const DEFAULT_PORT = 4173;
 const cliOptions = parseServerCliArgs(process.argv.slice(2));
@@ -11,9 +11,18 @@ const resolvedPort = Number(cliOptions.port ?? process.env.CHATBOT_PORT ?? proce
 const port = Number.isFinite(resolvedPort) && resolvedPort > 0 ? resolvedPort : DEFAULT_PORT;
 const baseDir = fileURLToPath(new URL('..', import.meta.url));
 const publicDir = resolve(baseDir, 'public');
-const chatbotClient = new McpChatClient({
-  product: cliOptions.product
-});
+const targets = loadTargetsFromEnv();
+if (cliOptions.product) {
+  const defaultEntry = targets[0];
+  if (defaultEntry) {
+    defaultEntry.options.product = defaultEntry.options.product ?? cliOptions.product;
+  }
+}
+const targetManager = new ChatTargetManager(targets);
+if (cliOptions.target) {
+  targetManager.setDefaultTarget(cliOptions.target);
+}
+const defaultTarget = targetManager.getDefaultTarget();
 
 const server = createServer(async (req, res) => {
   const requestUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -24,10 +33,13 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && requestUrl.pathname === '/api/status') {
+      const summary = targetManager.getTargetSummary(defaultTarget);
       respondJson(res, 200, {
-        connected: chatbotClient.isConnected(),
-        productFilter: chatbotClient.getProductFilter(),
-        connectionLabel: chatbotClient.getConnectionLabel()
+        connected: summary?.connected ?? false,
+        productFilter: summary?.productFilter ?? null,
+        connectionLabel: summary?.connectionLabel ?? '',
+        target: defaultTarget,
+        targets: targetManager.getTargetNames()
       });
       return;
     }
@@ -53,7 +65,7 @@ process.on('SIGINT', async () => {
   server.close(() => {
     console.log('HTTP server closed.');
   });
-  await chatbotClient.close();
+  await targetManager.closeAll();
   process.exit(0);
 });
 
@@ -67,6 +79,12 @@ async function handleAsk(req, res) {
   }
   const question = body.question ?? '';
   const product = body.product?.trim();
+  const requestedTarget = body.target?.trim();
+  if (requestedTarget && !targetManager.hasTarget(requestedTarget)) {
+    respondJson(res, 400, { error: `Unknown target "${requestedTarget}".` });
+    return;
+  }
+  const targetName = requestedTarget || defaultTarget;
 
   if (!question.trim()) {
     respondJson(res, 400, { error: 'Question cannot be empty.' });
@@ -74,12 +92,20 @@ async function handleAsk(req, res) {
   }
 
   try {
-    const result = await chatbotClient.ask(question, product ? { product } : {});
+    const client = await targetManager.getClient(targetName);
+    if (product) {
+      client.setProductFilter(product);
+    } else if (cliOptions.product && targetName === defaultTarget) {
+      client.setProductFilter(cliOptions.product);
+    }
+    await client.connect();
+    const result = await client.ask(question, product ? { product } : {});
     const answer = formatResultContent(result);
     respondJson(res, 200, {
       answer,
-      connectionLabel: chatbotClient.getConnectionLabel(),
-      productFilter: chatbotClient.getProductFilter()
+      connectionLabel: client.getConnectionLabel(),
+      productFilter: client.getProductFilter(),
+      target: targetName
     });
   } catch (error) {
     respondJson(res, 500, { error: error.message ?? 'Unable to call MCP tool.' });
@@ -175,10 +201,23 @@ function parseServerCliArgs(rawArgs) {
       options.product = arg.slice('--product='.length);
       continue;
     }
+    if (arg === '--server' || arg === '--target' || arg === '-s') {
+      options.target = rawArgs[i + 1] ?? '';
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--server=') || arg.startsWith('--target=')) {
+      options.target = arg.split('=').slice(1).join('=');
+      continue;
+    }
   }
   if (typeof options.product === 'string') {
     const trimmed = options.product.trim();
     options.product = trimmed ? trimmed : undefined;
+  }
+  if (typeof options.target === 'string') {
+    const trimmed = options.target.trim();
+    options.target = trimmed ? trimmed : undefined;
   }
   return options;
 }
