@@ -20,6 +20,7 @@ Set the following environment variables before running the chatbot:
 | `MCP_TOOL_NAME` | ❌ | `ask_cisco_documentation` | A different tool name exposed by the server. |
 | `MCP_EXTRA_ARGS` | ❌ | `{}` | JSON payload merged into every tool call (useful for optional filters). |
 | `CHATBOT_PORT` (or `PORT`) | ❌ | `4173` | Port for the web UI server; CLI `--port` takes precedence. |
+| `MCP_TARGETS` | ❌ | – | JSON array of multiple targets with their own API keys/URLs (see Multiple MCP targets). |
 
 Example shell profile entry:
 
@@ -37,6 +38,8 @@ npm run chatbot -- "How do I troubleshoot ACI fabric?"  # one-off question
 npm run chatbot -- --product "Cisco ACI" "How do I troubleshoot ACI fabric?"
 # force streamable transport if SSE errors
 MCP_TRANSPORT=streamable npm run chatbot -- --product "Cisco ACI" "How do I troubleshoot ACI fabric?"
+# switch between multiple targets
+npm run chatbot -- --server docs "What is the support matrix?"
 ```
 
 During the first connection the client lists available tools and looks for `ask_cisco_documentation`. If the server updates its schema, the client automatically inspects the tool input schema and uses the first string argument (preferring `query` / `question`).
@@ -61,11 +64,16 @@ MCP_API_KEY="<redacted>" npm run chatbot:5000
 Open the printed URL to access the UI. The page lets you submit a question, optionally add a product keyword, and view the responses inline. Server logs appear in the terminal window that launched the UI.
 
 To lock in a default product filter for the UI server, pass `--product "<name>"` (or set `MCP_PRODUCT`) when launching it. The browser form still lets you override the product per question.
+If you defined multiple MCP targets, a “Target” dropdown appears in the UI and sends the request to the selected server. Use `--target <name>` when launching the UI to choose the default entry.
 
 ### Product filter quick controls
 - Environment variable: `export MCP_PRODUCT="Cisco ACI"`
 - CLI flag: `npm run chatbot -- --product "Cisco ACI" "question..."`
 - Interactive command: While running, type `/product Cisco ACI` to set or `/product clear` to remove.
+### Multiple MCP targets (per-server API keys)
+- Environment variable: `MCP_TARGETS='[{"name":"docs","apiKey":"<key>","streamableUrl":"https://.../mcp","sseUrl":"https://.../mcp/sse"},{"name":"lab","apiKey":"<key2>","streamableUrl":"https://lab.example/mcp"}]'`
+- CLI flag to pick a target: `--server <name>` (alias `--target`). Interactive command: `/server <name>` (CLI) or Target dropdown (UI).
+- Each target keeps its own connection and default product filter. If no `MCP_TARGETS` is set, the single-target env vars remain the default.
 
 ## Output
 Results stream back as Model Context Protocol tool content. Text sections are printed directly; JSON/object payloads are pretty-printed; other media types are acknowledged but not rendered. Errors from the MCP server are surfaced verbatim so you can adjust inputs or credentials.

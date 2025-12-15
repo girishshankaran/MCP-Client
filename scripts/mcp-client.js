@@ -7,17 +7,20 @@ const DEFAULT_TOOL_NAME = 'ask_cisco_documentation';
 
 export class McpChatClient {
   constructor(options = {}) {
-    this.sseUrl = options.sseUrl ?? process.env.MCP_SSE_URL ?? process.env.MCP_SERVER_URL ?? DEFAULT_SSE_URL;
+    const useEnv = options.useProcessEnv !== false;
+    const env = useEnv ? process.env : {};
+
+    this.sseUrl = options.sseUrl ?? env.MCP_SSE_URL ?? env.MCP_SERVER_URL ?? DEFAULT_SSE_URL;
     this.streamableUrl =
       options.streamableUrl ??
-      process.env.MCP_STREAMABLE_URL ??
+      env.MCP_STREAMABLE_URL ??
       stripSseSuffix(this.sseUrl) ??
       'https://docs-ai.cloudapps.cisco.com/mcp';
-    this.apiKey = options.apiKey ?? process.env.MCP_API_KEY ?? process.env.CISCO_DOCS_API_KEY ?? process.env.X_API_KEY;
-    this.toolName = options.toolName ?? process.env.MCP_TOOL_NAME ?? DEFAULT_TOOL_NAME;
-    this.transportPreference = (options.transportPreference ?? process.env.MCP_TRANSPORT ?? 'auto').toLowerCase();
-    this.staticArgs = { ...(options.staticArgs ?? safeParseJson(process.env.MCP_EXTRA_ARGS) ?? {}) };
-    const initialProduct = options.product ?? process.env.MCP_PRODUCT ?? process.env.DOCS_PRODUCT ?? '';
+    this.apiKey = options.apiKey ?? env.MCP_API_KEY ?? env.CISCO_DOCS_API_KEY ?? env.X_API_KEY;
+    this.toolName = options.toolName ?? env.MCP_TOOL_NAME ?? DEFAULT_TOOL_NAME;
+    this.transportPreference = (options.transportPreference ?? env.MCP_TRANSPORT ?? 'auto').toLowerCase();
+    this.staticArgs = { ...(options.staticArgs ?? safeParseJson(env.MCP_EXTRA_ARGS, 'MCP_EXTRA_ARGS') ?? {}) };
+    const initialProduct = options.product ?? env.MCP_PRODUCT ?? env.DOCS_PRODUCT ?? '';
     this.productFilter = initialProduct.trim() || null;
     this.client = undefined;
     this.transport = undefined;
@@ -210,14 +213,14 @@ function pickPrimaryArgument(schema) {
   return null;
 }
 
-function safeParseJson(payload) {
+function safeParseJson(payload, label = 'JSON payload') {
   if (!payload) {
     return null;
   }
   try {
     return JSON.parse(payload);
   } catch {
-    console.warn('MCP_EXTRA_ARGS is not valid JSON. Ignoring value.');
+    console.warn(`${label} is not valid JSON. Ignoring value.`);
     return null;
   }
 }
@@ -251,4 +254,126 @@ export function formatResultContent(result) {
     sections.push(JSON.stringify(result ?? {}, null, 2));
   }
   return sections.join('\n\n');
+}
+
+export class ChatTargetManager {
+  constructor(targets) {
+    if (!targets?.length) {
+      throw new Error('At least one MCP target must be configured.');
+    }
+    this.targets = targets.map((target) => ({
+      name: target.name,
+      options: target.options ?? {},
+      useProcessEnv: target.useProcessEnv ?? false
+    }));
+    this.clients = new Map();
+    this.defaultTargetName = this.targets[0].name;
+  }
+
+  getTargetNames() {
+    return this.targets.map((t) => t.name);
+  }
+
+  hasTarget(name) {
+    return this.targets.some((t) => t.name === name);
+  }
+
+  setDefaultTarget(name) {
+    if (!this.hasTarget(name)) {
+      throw new Error(`Unknown target "${name}".`);
+    }
+    this.defaultTargetName = name;
+  }
+
+  getDefaultTarget() {
+    return this.defaultTargetName;
+  }
+
+  async getClient(targetName) {
+    const name = targetName ?? this.defaultTargetName;
+    const target = this.targets.find((t) => t.name === name);
+    if (!target) {
+      throw new Error(`Unknown target "${name}".`);
+    }
+    if (!this.clients.has(name)) {
+      const client = new McpChatClient({ ...target.options, useProcessEnv: target.useProcessEnv });
+      this.clients.set(name, client);
+    }
+    return this.clients.get(name);
+  }
+
+  async closeAll() {
+    const closers = [];
+    for (const client of this.clients.values()) {
+      closers.push(client.close());
+    }
+    await Promise.allSettled(closers);
+    this.clients.clear();
+  }
+
+  getTargetSummary(name) {
+    const target = this.targets.find((t) => t.name === name);
+    if (!target) {
+      return null;
+    }
+    const client = this.clients.get(name);
+    return {
+      name,
+      productFilter: client?.getProductFilter() ?? target.options.product ?? null,
+      connected: client?.isConnected() ?? false,
+      connectionLabel: client?.getConnectionLabel() ?? ''
+    };
+  }
+}
+
+export function loadTargetsFromEnv() {
+  const parsed = safeParseJson(process.env.MCP_TARGETS, 'MCP_TARGETS');
+  if (Array.isArray(parsed) && parsed.length) {
+    const targets = parsed
+      .map((entry, idx) => normalizeTargetEntry(entry, idx))
+      .filter(Boolean);
+    if (targets.length) {
+      return targets;
+    }
+  }
+  return [
+    {
+      name: 'Docs AI Hub',
+      options: {},
+      useProcessEnv: true
+    },
+    {
+      name: 'CDETs',
+      options: {},
+      useProcessEnv: true
+    }
+  ];
+}
+
+function normalizeTargetEntry(entry, index) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  const name = entry.name?.toString().trim() || `target-${index + 1}`;
+  const rawArgs = entry.extraArgs ?? entry.staticArgs;
+  const parsedArgs =
+    typeof rawArgs === 'string'
+      ? safeParseJson(rawArgs, `extraArgs for target ${name}`) ?? {}
+      : rawArgs && typeof rawArgs === 'object'
+        ? rawArgs
+        : {};
+
+  return {
+    name,
+    options: {
+      apiKey: entry.apiKey,
+      sseUrl: entry.sseUrl ?? entry.serverUrl,
+      streamableUrl: entry.streamableUrl,
+      transportPreference: entry.transportPreference ?? entry.transport,
+      toolName: entry.toolName,
+      staticArgs: parsedArgs,
+      product: entry.product
+    },
+    useProcessEnv: false
+  };
 }
