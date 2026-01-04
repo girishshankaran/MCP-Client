@@ -346,6 +346,11 @@ export function loadTargetsFromEnv() {
       name: 'CDETs',
       options: {},
       useProcessEnv: true
+    },
+    {
+      name: 'AEM',
+      options: {},
+      useProcessEnv: true
     }
   ];
 }

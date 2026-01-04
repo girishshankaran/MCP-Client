@@ -72,8 +72,9 @@ If you defined multiple MCP targets, a “Target” dropdown appears in the UI a
 - Interactive command: While running, type `/product Cisco ACI` to set or `/product clear` to remove.
 ### Multiple MCP targets (per-server API keys)
 - Environment variable: `MCP_TARGETS='[{"name":"docs","apiKey":"<key>","streamableUrl":"https://.../mcp","sseUrl":"https://.../mcp/sse"},{"name":"lab","apiKey":"<key2>","streamableUrl":"https://lab.example/mcp"}]'`
+- AEM example: `MCP_TARGETS='[{"name":"docs","apiKey":"<docs-key>","streamableUrl":"https://docs-ai.cloudapps.cisco.com/mcp","sseUrl":"https://docs-ai.cloudapps.cisco.com/mcp/sse"},{"name":"AEM","apiKey":"<aem-key>","streamableUrl":"https://aem.example.com/mcp","sseUrl":"https://aem.example.com/mcp/sse","product":"AEM"}]'`
 - CLI flag to pick a target: `--server <name>` (alias `--target`). Interactive command: `/server <name>` (CLI) or Target dropdown (UI).
-- Each target keeps its own connection and default product filter. If no `MCP_TARGETS` is set, the single-target env vars remain the default.
+- Each target keeps its own connection and default product filter. If no `MCP_TARGETS` is set, the built-in targets (`Docs AI Hub`, `CDETs`, `AEM`) all draw from the same process environment variables.
 
 ## Output
 Results stream back as Model Context Protocol tool content. Text sections are printed directly; JSON/object payloads are pretty-printed; other media types are acknowledged but not rendered. Errors from the MCP server are surfaced verbatim so you can adjust inputs or credentials.
